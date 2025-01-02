@@ -1,7 +1,7 @@
-# 推导哈密尔顿蒙特卡洛（HMC）方法实验报告
+# 哈密尔顿蒙特卡洛（HMC）采样方法实验报告
 
 ## 1. 模型描述
-本实验的目标是使用哈密尔顿蒙特卡洛（Hamiltonian Monte Carlo, HMC）方法对如下给定的**混合高斯分布**进行采样：
+本实验的目标是使用哈密尔顿蒙特卡洛（Hamiltonian Monte Carlo, HMC）采样方法对如下给定的**混合高斯分布**进行采样：
 
 $$
 p(x) = 0.3\mathcal{N}(x \mid 4, 0.3) + 0.7\mathcal{N}(x \mid 7, 2)
