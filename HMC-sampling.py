@@ -1,21 +1,28 @@
 import numpy as np
 from scipy.stats import norm, entropy
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 
 # 设置中文字体
 try:
-    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 微软雅黑
+    # 尝试使用系统自带的中文字体
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']  
     plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 except:
-    print("未找到 Microsoft YaHei 字体，尝试其他中文字体")
-    # 备选方案
-    chinese_fonts = ['SimHei', 'KaiTi', 'FangSong', 'SimSun', 'NSimSun', 'STXihei']
-    for font in chinese_fonts:
-        try:
-            plt.rcParams['font.sans-serif'] = [font]
-            break
-        except:
-            continue
+    print("警告：未找到合适的中文字体，图像中的中文可能无法正确显示")
+    # 使用默认字体
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+
+# 在创建图形之前添加字体检查
+def check_chinese_font():
+    """检查是否存在可用的中文字体"""
+    chinese_fonts = []
+    for f in fm.fontManager.ttflist:
+        if 'SimHei' in f.name or 'SimSun' in f.name or 'Microsoft YaHei' in f.name:
+            chinese_fonts.append(f.name)
+    return len(chinese_fonts) > 0
+
+has_chinese_font = check_chinese_font()
 
 # 保持原有的混合高斯分布参数
 weights = [0.3, 0.7]
@@ -107,6 +114,75 @@ def calculate_metrics(samples, x_vals, target_vals):
         'var_error': abs(theoretical_var - sample_var)
     }
 
+def hmc_with_ablation(n_samples, epsilon_values, L_values, init_positions, burn_in=1000):
+    """
+    进行消融实验，测试不同的步长、Leapfrog步数和初始位置。
+    """
+    results = []
+    total_combinations = len(epsilon_values) * len(L_values) * len(init_positions)
+    current_combination = 0
+    
+    for epsilon in epsilon_values:
+        for L in L_values:
+            for init_position in init_positions:
+                current_combination += 1
+                print(f"\r进度: {current_combination}/{total_combinations} "
+                      f"(epsilon={epsilon}, L={L}, init_position={init_position})", 
+                      end="", flush=True)
+                
+                samples, acceptance_rate = hamiltonian_monte_carlo(
+                    n_samples=n_samples + burn_in,
+                    epsilon=epsilon,
+                    L=L,
+                    init_position=init_position
+                )
+                samples = samples[burn_in:]  # 丢弃burn-in期样本
+                metrics = calculate_metrics(samples, x_vals, target_vals)
+                results.append({
+                    'epsilon': epsilon,
+                    'L': L,
+                    'init_position': init_position,
+                    'acceptance_rate': acceptance_rate,
+                    'metrics': metrics
+                })
+    print("\n消融实验完成！")
+    return results
+
+# 减少参数组合数量，使用更少的值进行测试
+epsilon_values = [0.01, 0.05]  # 减少步长选项
+L_values = [10, 20]           # 减少Leapfrog步数选项
+init_positions = [4, 5.5]     # 减少初始位置选项
+
+# 减少采样数量
+n_samples_ablation = 5000     # 消融实验使用较少的采样数
+
+# 计算目标分布
+x_vals = np.linspace(0, 10, 1000)
+target_vals = weights[0] * norm.pdf(x_vals, means[0], np.sqrt(variances[0])) + \
+             weights[1] * norm.pdf(x_vals, means[1], np.sqrt(variances[1]))
+
+# 进行消融实验
+print("开始消融实验...")
+ablation_results = hmc_with_ablation(
+    n_samples=n_samples_ablation,
+    epsilon_values=epsilon_values,
+    L_values=L_values,
+    init_positions=init_positions,
+    burn_in=500  # 减少burn-in期
+)
+
+# 打印消融实验结果
+print("\n消融实验结果:")
+for result in ablation_results:
+    print(f"\n步长: {result['epsilon']}, Leapfrog步数: {result['L']}, "
+          f"初始位置: {result['init_position']}")
+    print(f"接受率: {result['acceptance_rate']:.2%}")
+    print(f"KL散度: {result['metrics']['kl_divergence']:.4f}, "
+          f"MAD: {result['metrics']['mad']:.4f}")
+    print(f"均值误差: {result['metrics']['mean_error']:.4f}, "
+          f"方差误差: {result['metrics']['var_error']:.4f}")
+    print("-" * 50)
+
 # 设置随机种子以确保可重复性
 np.random.seed(42)
 
@@ -120,11 +196,6 @@ hmc_samples, acceptance_rate = hamiltonian_monte_carlo(
     L=20,          # 增加leapfrog步数以better探索
     init_position=5.5  # 初始位置接近理论均值
 )
-
-# 计算目标分布
-x_vals = np.linspace(0, 10, 1000)
-target_vals = weights[0] * norm.pdf(x_vals, means[0], np.sqrt(variances[0])) + \
-             weights[1] * norm.pdf(x_vals, means[1], np.sqrt(variances[1]))
 
 # 计算评估指标
 metrics = calculate_metrics(hmc_samples, x_vals, target_vals)
@@ -142,12 +213,12 @@ gs = plt.GridSpec(3, 1, height_ratios=[2, 1, 1.2], hspace=0.4)
 
 # 第一个子图：分布对比
 ax1 = fig.add_subplot(gs[0])
-ax1.plot(x_vals, target_vals, color='#FF6B6B', label='目标分布', linewidth=2)
-ax1.hist(hmc_samples, bins=50, density=True, alpha=0.6, label='HMC采样', 
+ax1.plot(x_vals, target_vals, color='#FF6B6B', label='Target Distribution', linewidth=2)
+ax1.hist(hmc_samples, bins=50, density=True, alpha=0.6, label='HMC Samples', 
          color='#4ECDC4', edgecolor='white')
-ax1.set_xlabel('x', fontsize=12, fontweight='bold')
-ax1.set_ylabel('密度', fontsize=12, fontweight='bold')
-ax1.set_title('改进后的HMC采样 vs 目标分布', fontsize=14, pad=15, fontweight='bold')
+ax1.set_xlabel('x', fontsize=12)
+ax1.set_ylabel('Density', fontsize=12)
+ax1.set_title('HMC Sampling vs Target Distribution', fontsize=14, pad=15)
 ax1.legend(fontsize=10, framealpha=0.8)
 ax1.grid(True, alpha=0.3, color='white')
 ax1.set_facecolor('#f8f9fa')
@@ -155,30 +226,30 @@ ax1.set_facecolor('#f8f9fa')
 # 第二个子图：采样轨迹
 ax2 = fig.add_subplot(gs[1])
 ax2.plot(np.arange(1000), hmc_samples[:1000], color='#45B7D1', alpha=0.8, linewidth=1)
-ax2.set_xlabel('采样步数', fontsize=12, fontweight='bold')
-ax2.set_ylabel('采样值', fontsize=12, fontweight='bold')
-ax2.set_title('采样轨迹（前1000步）', fontsize=14, pad=15, fontweight='bold')
+ax2.set_xlabel('Sample Steps', fontsize=12)
+ax2.set_ylabel('Sample Value', fontsize=12)
+ax2.set_title('Sampling Trajectory (First 1000 Steps)', fontsize=14, pad=15)
 ax2.grid(True, alpha=0.3, color='white')
 ax2.set_facecolor('#f8f9fa')
 
 # 第三个子图：评估指标
 ax3 = fig.add_subplot(gs[2])
-ax3.set_title('评估指标', fontsize=14, pad=15, fontweight='bold')
+ax3.set_title('Evaluation Metrics', fontsize=14, pad=15)
 
-# 将评估指标分为左右两列
+# 评估指标文本
 left_metrics = (
-    f"KL散度:           {metrics['kl_divergence']:.4f}\n"
-    f"平均绝对偏差(MAD): {metrics['mad']:.4f}\n"
-    f"理论均值:         {metrics['theoretical_mean']:.4f}\n"
-    f"采样均值:         {metrics['sample_mean']:.4f}\n"
-    f"均值误差:         {metrics['mean_error']:.4f}"
+    f"KL Divergence: {metrics['kl_divergence']:.4f}\n"
+    f"MAD: {metrics['mad']:.4f}\n"
+    f"Theoretical Mean: {metrics['theoretical_mean']:.4f}\n"
+    f"Sample Mean: {metrics['sample_mean']:.4f}\n"
+    f"Mean Error: {metrics['mean_error']:.4f}"
 )
 
 right_metrics = (
-    f"理论方差: {metrics['theoretical_var']:.4f}\n"
-    f"采样方差: {metrics['sample_var']:.4f}\n"
-    f"方差误差: {metrics['var_error']:.4f}\n"
-    f"接受率:   {acceptance_rate:.2%}\n"
+    f"Theoretical Variance: {metrics['theoretical_var']:.4f}\n"
+    f"Sample Variance: {metrics['sample_var']:.4f}\n"
+    f"Variance Error: {metrics['var_error']:.4f}\n"
+    f"Acceptance Rate: {acceptance_rate:.2%}\n"
 )
 
 # 创建左侧文本框
@@ -187,7 +258,6 @@ left_box = ax3.text(
     left_metrics,
     transform=ax3.transAxes,
     fontsize=11,
-    family='Microsoft YaHei',
     ha='center',
     va='center',
     bbox=dict(
@@ -205,7 +275,6 @@ right_box = ax3.text(
     right_metrics,
     transform=ax3.transAxes,
     fontsize=11,
-    family='Microsoft YaHei',
     ha='center',
     va='center',
     bbox=dict(
